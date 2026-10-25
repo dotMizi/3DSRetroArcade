@@ -1,2 +1,2 @@
-# 3DSRetroArcade
-Retro Arcade Suite für Nintendo 3DS
+# 3DS Retro Arcade
+Retro Arcade Games for Nintendo 3DS

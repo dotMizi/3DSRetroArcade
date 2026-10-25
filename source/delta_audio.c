@@ -1,0 +1,57 @@
+#include <3ds.h>
+#include <string.h>
+#include "delta_audio.h"
+#include "sound_synth.h"
+#define VOICES 10
+#define BACKGROUND_VOICE 9
+#define THRUST_VOICE 8
+static bool started,ready,activeLast,thrustPlaying;
+static int16_t*samples[SFX_COUNT];
+static ndspWaveBuf voices[VOICES];
+static void stopVoices(void){
+ for(int i=0;i<VOICES;i++)ndspChnWaveBufClear(i);
+ thrustPlaying=false;activeLast=false;
+}
+void deltaAudioExit(void){
+ if(started){stopVoices();ndspExit();started=false;}
+ /* NDSP is shut down before its DMA-readable sample memory is released. */
+ for(int i=0;i<SFX_COUNT;i++){if(samples[i])linearFree(samples[i]);samples[i]=NULL;}
+ ready=false;
+}
+bool deltaAudioInit(void){
+ deltaAudioExit();memset(voices,0,sizeof(voices));
+ if(R_FAILED(ndspInit()))return false;
+ started=true;
+ for(int i=0;i<SFX_COUNT;i++){
+  size_t count=soundSamples((SoundEffect)i);samples[i]=linearAlloc(count*sizeof(int16_t));
+  if(!samples[i]){deltaAudioExit();return false;}
+  soundGenerate((SoundEffect)i,samples[i],count);DSP_FlushDataCache(samples[i],count*sizeof(int16_t));
+ }
+ ndspSetOutputMode(NDSP_OUTPUT_STEREO);ndspSetMasterVol(.65f);
+ for(int i=0;i<VOICES;i++){
+  float mix[12]={.7f,.7f};ndspChnReset(i);ndspChnSetInterp(i,NDSP_INTERP_LINEAR);
+  ndspChnSetRate(i,DELTA_SOUND_RATE);ndspChnSetFormat(i,NDSP_FORMAT_MONO_PCM16);ndspChnSetMix(i,mix);
+ }
+ ready=true;return true;
+}
+bool deltaAudioAvailable(void){return ready;}
+static void queueVoice(int voice,SoundEffect effect,bool loop){
+ ndspWaveBuf*w=&voices[voice];memset(w,0,sizeof(*w));
+ w->data_pcm16=samples[effect];w->nsamples=soundSamples(effect);w->looping=loop;ndspChnWaveBufAdd(voice,w);
+}
+static void oneShot(SoundEffect effect,int first,int end){
+ for(int i=first;i<end;i++)if(voices[i].status==NDSP_WBUF_FREE||voices[i].status==NDSP_WBUF_DONE){queueVoice(i,effect,false);return;}
+}
+void deltaAudioUpdate(Game*g,bool active){
+ unsigned events=g->soundEvents;g->soundEvents=0;
+ if(!ready)return;
+ active=active&&g->playing&&!g->paused;
+ if(!active){if(activeLast)stopVoices();return;}
+ if(!activeLast)queueVoice(BACKGROUND_VOICE,SFX_BACKGROUND,true);
+ activeLast=true;
+ if(events&DELTA_SOUND_PLAYER)oneShot(SFX_PHEW,0,3);
+ if(events&DELTA_SOUND_ENEMY)oneShot(SFX_INK,3,6);
+ if(events&DELTA_SOUND_BOUNCE)oneShot(SFX_BOING,6,8);
+ if(g->thrust&&!thrustPlaying){queueVoice(THRUST_VOICE,SFX_THRUST,true);thrustPlaying=true;}
+ else if(!g->thrust&&thrustPlaying){ndspChnWaveBufClear(THRUST_VOICE);thrustPlaying=false;}
+}
