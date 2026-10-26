@@ -1,15 +1,15 @@
-#include <3ds.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <math.h>
-#include <sys/stat.h>
-#include <errno.h>
+#include "delta_audio.h"
+#include "delta_intro.h"
 #include "draw.h"
 #include "score_ui.h"
-#include "delta_intro.h"
-#include "delta_audio.h"
 #include "splash_bin.h"
+#include <3ds.h>
+#include <errno.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 
 static const char *savePath = "sdmc:/3ds/RetroArcade/scores-v2.txt";
 
@@ -180,7 +180,8 @@ static void appUpdate(App *a, u32 down, u32 held, circlePosition cp, touchPositi
     }
     if (a->screen == DELTA_INTRO && !deltaIntroComplete(a->introElapsed) && down)
     {
-        /* Consume the skip press so it cannot also start the game or leave the intro. */
+        /* Consume the skip press so it cannot also start the game or leave the
+     * intro. */
         a->introElapsed = (float)strlen(deltaIntroText);
         return;
     }
@@ -288,7 +289,7 @@ static void appUpdate(App *a, u32 down, u32 held, circlePosition cp, touchPositi
         return;
     }
     /* Consume each button/contact held at launch until it has been released.
-    Mask both edge and held inputs; a held touch may move onto the fire pad. */
+  Mask both edge and held inputs; a held touch may move onto the fire pad. */
     a->blockedPlayKeys &= held | down;
     held &= ~a->blockedPlayKeys;
     down &= ~a->blockedPlayKeys;
@@ -331,8 +332,10 @@ static void appUpdate(App *a, u32 down, u32 held, circlePosition cp, touchPositi
     }
     if (a->mode == 2)
     {
+        if (down & KEY_Y)
+            a->rescue.invincible = !a->rescue.invincible;
         rescueStep(&a->rescue, dx, dy, (held & (KEY_A | KEY_R)) != 0, (held & KEY_B) != 0, dt);
-        if (a->rescue.over || a->rescue.win)
+        if (a->rescue.over)
             appFinish(a, a->rescue.score);
     }
 }
@@ -402,12 +405,8 @@ static void appRender(App *a, unsigned char *top, unsigned char *bottom)
         shieldPanel(&a->sky);
     else
     {
-        snprintf(status,
-                 sizeof(status),
-                 "LIVES %d  ABOARD %d  RESCUED %d",
-                 a->rescue.lives,
-                 a->rescue.onboard,
-                 a->rescue.rescued);
+        snprintf(
+            status, sizeof(status), "LIVES %d SAVED %d LOST %d", a->rescue.lives, a->rescue.rescued, a->rescue.lost);
         drawPanel(2, a->rescue.score, scoresBest(&a->scores, 2), status);
     }
     if (a->saveFailed && a->screen != SCORE_LIST)

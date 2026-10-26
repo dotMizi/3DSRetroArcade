@@ -15,6 +15,7 @@ void drawDeltaPanel(const Game *g, int best);
 void drawShield(Shield *s);
 void drawShieldTallyPanel(const Shield *s);
 void drawRescue(Rescue *r);
+void drawRescueTallyPanel(const Rescue *r);
 void drawMenu(int selected);
 void drawPanel(int game, int score, int best, const char *status);
 #endif

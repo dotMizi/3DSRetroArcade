@@ -1,15 +1,19 @@
-#include <3ds.h>
-#include <string.h>
-#include <math.h>
 #include "delta_audio.h"
 #include "sound_synth.h"
-#define VOICES 19
+#include <3ds.h>
+#include <math.h>
+#include <string.h>
+#define VOICES 23
+#define RESCUE_TALLY_VOICE 21
+#define RESCUE_WAVE_VOICE 22
+#define RESCUE_OUCH_VOICE 20
+#define RESCUE_CRASH_VOICE 19
 #define SHIELD_FIRST_VOICE 11
 #define ROTOR_VOICE 10
 #define BACKGROUND_VOICE 9
 #define THRUST_VOICE 8
 static bool started, ready, activeLast, thrustPlaying, rotorPlaying;
-static bool shieldActiveLast;
+static bool shieldActiveLast, rescueCrashPlaying;
 static float rotorRate;
 static int16_t *samples[SFX_COUNT];
 static ndspWaveBuf voices[VOICES];
@@ -19,6 +23,7 @@ static void stopVoices(void)
     for (int i = 0; i < VOICES; i++)
         ndspChnWaveBufClear(i);
     shieldActiveLast = false;
+    rescueCrashPlaying = false;
     rotorPlaying = false;
     thrustPlaying = false;
     activeLast = false;
@@ -135,18 +140,51 @@ void deltaAudioUpdate(Game *g, bool active)
     }
 }
 
-void rescueAudioUpdate(const Rescue *r, bool active, float dt)
+void rescueAudioUpdate(Rescue *r, bool active, float dt)
 {
+    unsigned events = r->soundEvents;
+    r->soundEvents = 0;
     if (!ready)
         return;
-    active = active && !r->over && !r->win;
+    active = active && !r->over && (!r->win || r->tally);
     if (!active)
+    {
+        if (rotorPlaying)
+            ndspChnWaveBufClear(ROTOR_VOICE);
+        rotorPlaying = false;
+        ndspChnWaveBufClear(RESCUE_CRASH_VOICE);
+        rescueCrashPlaying = false;
+        ndspChnWaveBufClear(RESCUE_OUCH_VOICE);
+        ndspChnWaveBufClear(RESCUE_TALLY_VOICE);
+        ndspChnWaveBufClear(RESCUE_WAVE_VOICE);
+        return;
+    }
+    if (events & RESCUE_SOUND_TALLY)
+        oneShot(SFX_SHIELD_BONUS, RESCUE_TALLY_VOICE, RESCUE_TALLY_VOICE + 1);
+    if (events & RESCUE_SOUND_WAVE)
+        oneShot(SFX_SHIELD_WAVE, RESCUE_WAVE_VOICE, RESCUE_WAVE_VOICE + 1);
+    if (r->tally)
     {
         if (rotorPlaying)
             ndspChnWaveBufClear(ROTOR_VOICE);
         rotorPlaying = false;
         return;
     }
+    if (events & RESCUE_SOUND_HOUSE_HIT)
+        oneShot(SFX_SHIELD_DAMAGE, RESCUE_CRASH_VOICE, RESCUE_CRASH_VOICE + 1);
+    if (events & RESCUE_SOUND_OUCH)
+        oneShot(SFX_RESCUE_OUCH, RESCUE_OUCH_VOICE, RESCUE_OUCH_VOICE + 1);
+    if (r->crashTimer > 0)
+    {
+        if (rotorPlaying)
+            ndspChnWaveBufClear(ROTOR_VOICE);
+        rotorPlaying = false;
+        if (!rescueCrashPlaying)
+            oneShot(SFX_SHIELD_DAMAGE, RESCUE_CRASH_VOICE, RESCUE_CRASH_VOICE + 1);
+        rescueCrashPlaying = true;
+        return;
+    }
+    rescueCrashPlaying = false;
     bool grounded = r->y >= RESCUE_LAND_Y - 3 && fabsf(r->vx) < 35 && fabsf(r->vy) < 25;
     float target = grounded ? .65f : 1.05f;
     if (!rotorPlaying)
@@ -158,7 +196,8 @@ void rescueAudioUpdate(const Rescue *r, bool active, float dt)
     }
     else
     {
-        /* Change playback rate in place: no restart or phase jump between frames. */
+        /* Change playback rate in place: no restart or phase jump between frames.
+     */
         float blend = fminf(.1f, fmaxf(0, dt)) * 2.f;
         rotorRate += (target - rotorRate) * blend;
         ndspChnSetRate(ROTOR_VOICE, DELTA_SOUND_RATE * rotorRate);
@@ -174,7 +213,7 @@ void shieldAudioUpdate(Shield *s, bool active)
     if (!active)
     {
         if (shieldActiveLast)
-            for (int i = SHIELD_FIRST_VOICE; i < VOICES; i++)
+            for (int i = SHIELD_FIRST_VOICE; i < RESCUE_CRASH_VOICE; i++)
                 ndspChnWaveBufClear(i);
         shieldActiveLast = false;
         return;

@@ -1,14 +1,15 @@
+#include <3ds.h>
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <3ds.h>
 unsigned char splash_bin[288000];
 #define main arcadeAppMain
 #include "../source/main.c"
 #undef main
 
-/* App-flow tests substitute the hardware audio driver; its real logic has separate NDSP tests. */
+/* App-flow tests substitute the hardware audio driver; its real logic has
+ * separate NDSP tests. */
 bool deltaAudioInit(void)
 {
     return true;
@@ -31,7 +32,7 @@ void shieldAudioUpdate(Shield *s, bool active)
     s->soundEvents = 0;
 }
 
-void rescueAudioUpdate(const Rescue *r, bool active, float dt)
+void rescueAudioUpdate(Rescue *r, bool active, float dt)
 {
     (void)r;
     (void)active;
@@ -233,7 +234,7 @@ static void testRescueScenery(void)
         if (frame)
             assert(memcmp(flag, previous, sizeof(flag)));
         memcpy(previous, flag, sizeof(flag));
-        int ground = 16 + (300 * 240 + 239 - 216) * 3;
+        int ground = 16 + (340 * 240 + 239 - 216) * 3;
         assert(topBuffer[ground] == 0x85 && topBuffer[ground + 1] == 0x85 && topBuffer[ground + 2] == 0x85);
         char name[64];
         snprintf(name, sizeof(name), "rescue-homebase-%02d.ppm", frame);
@@ -241,7 +242,7 @@ static void testRescueScenery(void)
         guards();
     }
     unsigned char lastLandscape[400 * 240 * 3];
-    for (int camera = 0; camera <= 1200; camera += 40)
+    for (int camera = 0; camera <= RESCUE_WORLD_WIDTH - 400; camera += 40)
     {
         r.camera = camera;
         r.x = camera + 180;
@@ -273,7 +274,8 @@ static void testBombRendering(void)
     r.y = 90;
     r.vx = 60;
     r.shield = 10;
-    r.tanks[0] = (Tank){565, 100, true};
+    r.x = 1000;
+    r.tanks[0] = (Tank){1065, 100, true};
     r.tankVelocity[0] = 0;
     for (int frame = 0; frame < 80; frame++)
     {
@@ -314,6 +316,161 @@ static void testGroundAnimation(void)
     }
 }
 
+static void testAirCombatAnimation(void)
+{
+    Rescue r;
+    rescueStart(&r, 0, 4, 0);
+    r.x = 1600;
+    r.y = 90;
+    r.shield = 1000;
+    r.tankSpawnDelay = 1e9f;
+    for (int frame = 0; frame < 1200; frame++)
+        rescueStep(&r, 0, 0, false, false, .02f);
+    for (int frame = 0; frame < 60; frame++)
+    {
+        for (int step = 0; step < 3; step++)
+            rescueStep(&r, .25f, 0, false, false, .02f);
+        canvas(topBuffer + 16, 400);
+        drawRescue(&r);
+        guards();
+        char name[64];
+        snprintf(name, sizeof(name), "rescue-air-%02d.ppm", frame);
+        ppm(name, topBuffer + 16, 400);
+    }
+}
+
+static void testRescueWaveFlow(void)
+{
+    App a;
+    appInit(&a);
+    a.mode = 2;
+    a.screen = PLAY;
+    rescueStart(&a.rescue, 0, 1, 0);
+    event(&a, KEY_Y, 0, 0);
+    assert(a.rescue.invincible);
+    a.rescue.shield = 0;
+    a.rescue.bullets[0] = (Bullet){a.rescue.x, a.rescue.y, 0, 0, 1, true, false};
+    event(&a, 0, 0, 0);
+    assert(a.rescue.lives == 3 && !a.rescue.crashTimer);
+    event(&a, KEY_Y, 0, 0);
+    assert(!a.rescue.invincible);
+    a.rescue.lives = 1;
+    a.rescue.rescued = PEOPLE - 4;
+    a.rescue.lost = 4;
+    a.rescue.tanksDestroyed = 3;
+    a.rescue.score = a.rescue.rescued * 200 + 300;
+    for (int i = 0; i < PEOPLE; i++)
+        a.rescue.people[i].state = i < 4 ? PERSON_LOST : PERSON_INSIDE;
+    event(&a, 0, 0, 0);
+    assert(a.screen == PLAY && a.rescue.tally && !a.rescue.over);
+    for (int frame = 0; frame < 65; frame++)
+    {
+        for (int step = 0; step < 5; step++)
+            event(&a, 0, 0, 0);
+        appRender(&a, topBuffer + 16, bottomBuffer + 16);
+        guards();
+        char name[64];
+        snprintf(name, sizeof(name), "rescue-tally-%02d.ppm", frame);
+        ppm(name, topBuffer + 16, 400);
+    }
+    assert(a.screen == PLAY);
+    a.rescue.tallyRow = 5;
+    a.rescue.tallyDelay = 1.29f;
+    event(&a, 0, 0, 0);
+    assert(a.screen == PLAY && a.rescue.stage == 2 && a.rescue.lives == 1);
+    a.rescue.shield = 0;
+    a.rescue.bullets[0] = (Bullet){a.rescue.x, a.rescue.y, 0, 0, 1, true, false};
+    event(&a, 0, 0, 0);
+    assert(a.screen == PLAY && a.rescue.crashTimer > 0);
+    for (int frame = 0; frame < 65; frame++)
+        event(&a, 0, 0, 0);
+    assert(a.rescue.over && (a.screen == ENTER_NAME || a.screen == SCORE_LIST));
+}
+
+static void testBurningHouseAnimation(void)
+{
+    Rescue r;
+    rescueStart(&r, 0, 1, 0);
+    r.x = r.houses[0].x + 110;
+    r.y = 95;
+    r.shield = 100;
+    r.tankSpawnDelay = 1e9f;
+    r.tanks[0] = (Tank){r.houses[0].x - 100, 100, true};
+    r.tankVelocity[0] = 0;
+    for (int frame = 0; frame < 120; frame++)
+    {
+        if (frame == 8)
+            r.bullets[0] = (Bullet){r.houses[0].x - 90, 205, 90, -25, 3, true, false};
+        for (int step = 0; step < 5; step++)
+            rescueStep(&r, 0, 0, false, false, .02f);
+        canvas(topBuffer + 16, 400);
+        Rescue before = r;
+        drawRescue(&r);
+        assert(!memcmp(&r, &before, sizeof(r)));
+        guards();
+        char name[64];
+        snprintf(name, sizeof(name), "rescue-house-%02d.ppm", frame);
+        ppm(name, topBuffer + 16, 400);
+    }
+    assert(r.houses[0].burning && r.houses[0].residents == 0);
+}
+
+static void testFenceAnimation(void)
+{
+    Rescue r;
+    rescueStart(&r, 0, 1, 0);
+    r.x = RESCUE_FENCE_X + 100;
+    r.y = 100;
+    r.shield = 100;
+    for (int i = 0; i < TANKS; i++)
+        r.tanks[i].fire = 100;
+    r.tanks[0].alive = true;
+    r.tanks[0].x = RESCUE_TANK_MIN_X + 22;
+    r.tankVelocity[0] = -24;
+    for (int frame = 0; frame < 40; frame++)
+    {
+        for (int step = 0; step < 5; step++)
+            rescueStep(&r, 0, 0, false, false, .02f);
+        canvas(topBuffer + 16, 400);
+        drawRescue(&r);
+        guards();
+        char name[64];
+        snprintf(name, sizeof(name), "rescue-fence-%02d.ppm", frame);
+        ppm(name, topBuffer + 16, 400);
+    }
+}
+
+static void testCrashAnimation(void)
+{
+    Rescue r;
+    rescueStart(&r, 0, 1, 0);
+    for (int i = 0; i < TANKS; i++)
+        r.tanks[i].alive = false;
+    r.x = 500;
+    r.y = 95;
+    r.camera = 300;
+    r.shield = 0;
+    r.onboard = 3;
+    for (int i = 0; i < 3; i++)
+        r.people[i].state = PERSON_ABOARD;
+    for (int frame = 0; frame < 50; frame++)
+    {
+        if (frame == 5)
+            r.bullets[0] = (Bullet){r.x, r.y, 0, 0, 1, true, false};
+        for (int step = 0; step < 2; step++)
+            rescueStep(&r, 0, 0, false, false, .02f);
+        canvas(topBuffer + 16, 400);
+        Rescue before = r;
+        drawRescue(&r);
+        assert(!memcmp(&r, &before, sizeof(r)));
+        guards();
+        char name[64];
+        snprintf(name, sizeof(name), "rescue-crash-%02d.ppm", frame);
+        ppm(name, topBuffer + 16, 400);
+    }
+    assert(r.lives == 2 && r.lost == 3 && r.onboard == 0 && !r.crashTimer);
+}
+
 static void testHomecomingAnimation(void)
 {
     Rescue r;
@@ -338,7 +495,7 @@ static void testHomecomingAnimation(void)
         snprintf(name, sizeof(name), "rescue-homecoming-%03d.ppm", frame);
         ppm(name, topBuffer + 16, 400);
     }
-    assert(r.onboard == 0 && r.rescued == 8);
+    assert(r.onboard == 0 && r.rescued == RESCUE_CAPACITY);
 }
 
 static void testMountainParallax(void)
@@ -550,8 +707,13 @@ int main(void)
     assert(legacy);
     fputs("100 200 300\n", legacy);
     fclose(legacy);
-    const char *expected =
-        "IN THE YEAR 2187, THE DELTA SYSTEM WAS CREATED TO PROTECT THE COLONIES OF MANKIND. CONTROLLED BY AN ADVANCED ARTIFICIAL INTELLIGENCE, ITS DEFENSE FORCES WERE THOUGHT INVINCIBLE. BUT DELTA HAS TURNED AGAINST ITS MAKERS. NOW ONLY THE BRAVEST PILOTS DARE TO ENTER THE COMBAT ZONE. AGAINST ENDLESS WAVES OF DEADLY MACHINES, ONE PILOT MUST SURVIVE. THE FATE OF MANKIND RESTS UPON SKILL, COURAGE AND SPEED. THE FINAL BATTLE HAS BEEN GIVEN A CODE NAME... DELTA-RACE";
+    const char *expected = "IN THE YEAR 2187, THE DELTA SYSTEM WAS CREATED TO PROTECT THE COLONIES "
+                           "OF MANKIND. CONTROLLED BY AN ADVANCED ARTIFICIAL INTELLIGENCE, ITS "
+                           "DEFENSE FORCES WERE THOUGHT INVINCIBLE. BUT DELTA HAS TURNED AGAINST "
+                           "ITS MAKERS. NOW ONLY THE BRAVEST PILOTS DARE TO ENTER THE COMBAT ZONE. "
+                           "AGAINST ENDLESS WAVES OF DEADLY MACHINES, ONE PILOT MUST SURVIVE. THE "
+                           "FATE OF MANKIND RESTS UPON SKILL, COURAGE AND SPEED. THE FINAL BATTLE "
+                           "HAS BEEN GIVEN A CODE NAME... DELTA-RACE";
     char normalized[1024];
     int at = 0;
     for (const char *p = deltaIntroText; *p; p++)
@@ -582,6 +744,11 @@ int main(void)
     testMountainParallax();
     testGroundAnimation();
     testHomecomingAnimation();
+    testCrashAnimation();
+    testFenceAnimation();
+    testBurningHouseAnimation();
+    testRescueWaveFlow();
+    testAirCombatAnimation();
     testBombRendering();
     for (int game = 0; game < 3; game++)
     {
@@ -625,7 +792,7 @@ int main(void)
         if (game == 2)
         {
             a.rescue.score = 3500;
-            a.rescue.win = true;
+            a.rescue.over = true;
         }
         event(&a, 0, 0, 0);
         if (game == 0)
@@ -664,7 +831,8 @@ int main(void)
         assert(a.screen == PLAY);
         assert((game == 0 ? a.delta.score : game == 1 ? a.sky.score : a.rescue.score) == 0);
     }
-    // Incoming trails stay on the main screen; the touch pad never reveals threats.
+    // Incoming trails stay on the main screen; the touch pad never reveals
+    // threats.
     a.mode = 1;
     a.screen = PLAY;
     shieldStart(&a.sky, 42, 0);
@@ -726,7 +894,8 @@ int main(void)
     appFinish(&a, 1);
     assert(a.screen == SCORE_LIST && !memcmp(&before, &a.scores, sizeof(before)));
     render(&a, "scores-full");
-    // SELECT commits the visible three characters, and save failures can be retried.
+    // SELECT commits the visible three characters, and save failures can be
+    // retried.
     a.mode = 1;
     appFinish(&a, 9000);
     memcpy(a.initials, "A 9", 4);
@@ -762,6 +931,7 @@ int main(void)
     testStartRelease();
     frame = 0;
     assert(arcadeAppMain() == 0 && frame == 11);
-    puts(
-        "PASS: all three end-of-game flows, shared initials keyboard, list persistence, restart, SELECT commit, save/reload/retry, rejected ranks, exit/cancel, real main input routing, screen guards.");
+    puts("PASS: all three end-of-game flows, shared initials keyboard, list "
+         "persistence, restart, SELECT commit, save/reload/retry, rejected "
+         "ranks, exit/cancel, real main input routing, screen guards.");
 }

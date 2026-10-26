@@ -7,6 +7,6 @@ bool deltaAudioInit(void);
 bool deltaAudioAvailable(void);
 void deltaAudioUpdate(Game *g, bool active);
 void shieldAudioUpdate(Shield *s, bool active);
-void rescueAudioUpdate(const Rescue *r, bool active, float dt);
+void rescueAudioUpdate(Rescue *r, bool active, float dt);
 void deltaAudioExit(void);
 #endif

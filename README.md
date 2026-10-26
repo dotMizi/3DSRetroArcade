@@ -10,13 +10,11 @@ RetroArcade brings three classic arcade games from the 80s to the Nintendo 3DS. 
 
 ### Delta Race
 
-Delta Race puts you in control of a spacecraft inside a combat arena. Rotate, thrust and use your momentum to survive waves of enemy machines. Features include synthesized sound effects, a rhythmic background loop and an animated enemy scoring guide.
+Delta Race puts you in control of a spacecraft inside a combat arena. Rotate, thrust and use your momentum to survive waves of enemy machines. 
 
 ### Sky Shield
 
 Sky Shield challenges you to defend six cities using three missile batteries. Incoming missiles leave trails across the upper screen; aim and fire using the touchscreen or physical controls.
-
-Cities have three damage stages: a protected skyline, an unshielded skyline and a ruin. At the end of each wave, an animated tally awards points for unused interceptors and surviving cities.
 
 ### Rescue Wing
 

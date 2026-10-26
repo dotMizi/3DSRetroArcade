@@ -1,10 +1,10 @@
 #include "draw.h"
 #include "huey_sprite.h"
 #include "menu_icons.h"
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #define CYAN 0x58eaff
 #define ORANGE 0xffa34f
 static unsigned char *fb;
@@ -105,7 +105,8 @@ static void ship(Game *g)
         circle(x, y, 14, 0x286b84);
 }
 
-/* Shared silhouettes keep the arcade point legend identical to the arena enemies. */
+/* Shared silhouettes keep the arcade point legend identical to the arena
+ * enemies. */
 static void deltaEnemy(int x, int y, int type, float angle, float radius)
 {
     unsigned color = type == 1 ? 0xff547b : ORANGE;
@@ -227,7 +228,8 @@ void text(int x, int y, const char *s, unsigned c, int scale)
     }
 }
 
-/* Compose the sprite and rotors before rotating the whole monochrome aircraft. */
+/* Compose the sprite and rotors before rotating the whole monochrome aircraft.
+ */
 static void heliMaskPixel(unsigned char mask[64][96], int x, int y)
 {
     x += 48;
@@ -253,7 +255,8 @@ static void heli(int x, int y, float yaw, unsigned color, float time, float tilt
                 if (hueyFrontMask[row][col] == '#')
                     heliMaskPixel(mask, (int)lroundf(front * (col - HUEY_FRONT_WIDTH / 2)), row - HUEY_PIVOT_Y);
     }
-    /* Two-bladed main rotor: eight discrete pixel frames, independent of frame rate. */
+    /* Two-bladed main rotor: eight discrete pixel frames, independent of frame
+   * rate. */
     static const int reach[8] = {27, 23, 13, 4, 13, 23, 27, 13};
     static const int slope[8] = {0, 1, 1, 0, -1, -1, 0, 1};
     int frame = ((unsigned)(time * 18)) % 8;
@@ -269,7 +272,8 @@ static void heli(int x, int y, float yaw, unsigned color, float time, float tilt
     if (side > .6f)
         for (int i = -3; i <= 3; i++)
             heliMaskPixel(mask, tx + dir * tail[tailFrame][0] * i / 3, ty + tail[tailFrame][1] * i / 3);
-    /* Inverse nearest-neighbour sampling avoids holes in rotated pixel silhouettes. */
+    /* Inverse nearest-neighbour sampling avoids holes in rotated pixel
+   * silhouettes. */
     float c = cosf(tilt), s = sinf(tilt);
     for (int yy = -32; yy < 32; yy++)
         for (int xx = -48; xx < 48; xx++)
@@ -377,7 +381,8 @@ void drawPanel(int game, int score, int best, const char *status)
         text(16, 108, "A/R: FIRE FORWARD  B: DROP BOMB", 0xcbb7e8, 1);
         text(16, 125, "LAND GENTLY TO PICK UP PEOPLE", 0xcbb7e8, 1);
         text(16, 144, "LEFT BASE: DROP OFF PASSENGERS", 0xcbb7e8, 1);
-        text(16, 163, "CAPACITY: 8 PASSENGERS", CYAN, 1);
+        text(16, 163, "CAPACITY: 16 PASSENGERS", CYAN, 1);
+        text(16, 182, "Y: TOGGLE INVINCIBILITY", 0xcbb7e8, 1);
     }
     text(16, 210, "START: EXIT    SELECT: MENU", 0x9989b4, 1);
     text(16, 227, "AFTER GAME OVER: HIGH SCORES", 0x9989b4, 1);
@@ -565,15 +570,25 @@ void drawShield(Shield *s)
 
 static void rescueFlag(int x, int y, float time)
 {
+    static const char *emblem[] = {".....###.....",
+                                   "...##.#.##...",
+                                   ".#.#..#..#.#.",
+                                   "#..#######..#",
+                                   "#..#.###.#..#",
+                                   "#..#######..#",
+                                   ".#.#..#..#.#.",
+                                   ".#..##.##..#.",
+                                   "..#...#...#..",
+                                   "...###.###...",
+                                   ".....###....."};
     line(x, y - 1, x, 168, 0xd4d4d4);
     for (int column = 0; column < 22; column++)
     {
         int ripple = lroundf(sinf(time * 8 - column * .38f) * column / 12.f);
         for (int row = 0; row < 13; row++)
         {
-            bool cross = (column >= 9 && column <= 12 && row >= 2 && row <= 10) ||
-                         (column >= 6 && column <= 15 && row >= 5 && row <= 7);
-            pixel(x + 1 + column, y + row + ripple, cross ? 0xe93232 : 0xf5f5ee);
+            bool white = column >= 5 && column < 18 && row >= 1 && row < 12 && emblem[row - 1][column - 5] == '#';
+            pixel(x + 1 + column, y + row + ripple, white ? 0xffffff : 0x418fde);
         }
     }
 }
@@ -583,7 +598,8 @@ static void rescueHomebase(const Rescue *r)
     int x = -r->camera;
     if (x + 185 < 0)
         return;
-    /* Low, solid building with a broad landing apron, inspired by early pixel art. */
+    /* Low, solid building with a broad landing apron, inspired by early pixel
+   * art. */
     for (int y = 190; y <= 197; y++)
         line(x + 7 - (y - 190), y, x + 170 + (y - 190), y, 0x443ca0);
     line(x + 171, 191, x + 178, 197, 0xe7e7df);
@@ -669,7 +685,7 @@ static void rescueMountains(float camera)
 
 static void rescueTrees(float camera)
 {
-    for (int i = 0; i < 30; i++)
+    for (int i = 0; i < 60; i++)
     {
         unsigned seed = landscapeHash(i + 311u);
         int x = i * 59 - (int)(camera * .8f);
@@ -751,8 +767,191 @@ static void rescueTank(int x, int y, int facing, int frame)
     pixel(x + facing * 12, y, 0xf1dab1);
 }
 
+static void rescueBoundary(float camera)
+{
+    int x = RESCUE_FENCE_X - camera;
+    if (x < -40 || x > 440)
+        return;
+    /* A fence running across the depth of the ground separates base and front. */
+    for (int panel = 0; panel < 2; panel++)
+    {
+        int px = x + panel * 6, py = RESCUE_HORIZON + panel * 14;
+        line(px, py - 16, px + 6, py - 2, 0xb0aaa0);
+        line(px, py - 2, px + 6, py + 12, 0x787b83);
+        for (int row = 0; row < 14; row += 4)
+        {
+            line(px, py - 15 + row, px + 6, py - 1 + row, 0x666978);
+            line(px, py - 3 + row, px + 6, py - 13 + row, 0x666978);
+        }
+    }
+    for (int post = 0; post < 3; post++)
+    {
+        int px = x + post * 6, py = RESCUE_HORIZON + post * 14;
+        line(px, py - 18, px, py, 0xc6b6a0);
+        pixel(px + 1, py - 18, 0x847a73);
+    }
+    for (int stripe = 0; stripe < 5; stripe++)
+        line(x - 10 + stripe * 5, 220, x - 7 + stripe * 5, 220, stripe % 2 ? 0x484954 : 0xc6ae79);
+}
+
+static void rescueHouse(const RescueHouse *home, float camera, float time, int index)
+{
+    int x = home->x - camera, floor = RESCUE_HORIZON;
+    if (x < -45 || x > 445)
+        return;
+    unsigned wall = home->burning ? 0x4a3939 : index % 2 ? 0x68626a : 0x806652;
+    fill(x - 24, floor - 22, 49, 23, wall);
+    for (int row = 0; row < 10; row++)
+        line(x - 28 + row * 2,
+             floor - 22 - row,
+             x + 28 - row * 2,
+             floor - 22 - row,
+             home->burning ? 0x3e333b : 0x493e49);
+    line(x - 24, floor, x + 24, floor, 0xa8a09a);
+    fill(x - 4, floor - 13, 8, 14, 0x151821);
+    for (int side = -1; side <= 1; side += 2)
+    {
+        fill(x + side * 15 - 4, floor - 16, 8, 7, home->burning ? 0xe97932 : 0xaba38c);
+        line(x + side * 15, floor - 16, x + side * 15, floor - 10, 0x4a444c);
+    }
+    if (home->burning)
+    {
+        for (int flame = 0; flame < 7; flame++)
+        {
+            int fx = x - 22 + flame * 7;
+            int height = 9 + (int)(sinf(time * 11 + flame * 2 + index) * 4);
+            for (int row = 0; row < height; row++)
+            {
+                int span = (height - row) / 3;
+                line(fx - span, floor - 21 - row, fx + span, floor - 21 - row, row > height / 2 ? 0xe56b2e : 0xffc66b);
+            }
+        }
+        for (int puff = 0; puff < 5; puff++)
+        {
+            float age = fmodf(time * .6f + puff * .2f, 1.f);
+            int px = x + sinf(age * 6 + index) * 7 + age * 15;
+            int py = floor - 32 - age * 35;
+            circle(px, py, 3 + age * 7, age < .5f ? 0x5c555c : 0x393945);
+        }
+    }
+}
+
+static void rescueCrash(const Rescue *r)
+{
+    float age = .9f - r->crashTimer;
+    int x = r->x - r->camera, y = r->y;
+    if (age < .48f)
+    {
+        int radius = 4 + age * 46;
+        for (int row = -radius; row <= radius; row++)
+        {
+            int span = sqrtf(radius * radius - row * row);
+            line(x - span, y + row, x + span, y + row, age < .12f ? 0xfff2b0 : 0xe57430);
+        }
+        circle(x, y, radius + 3, 0xffc45f);
+        circle(x, y, radius / 2, 0xffe6a3);
+    }
+    for (int piece = 0; piece < 16; piece++)
+    {
+        float angle = piece * 6.2831853f / 16;
+        float speed = 22 + (piece * 17) % 48;
+        int dx = cosf(angle) * speed * age;
+        int dy = sinf(angle) * speed * age + age * age * 30;
+        unsigned color = age < .45f ? 0xffd176 : piece % 2 ? 0x845647 : 0xa8a3a0;
+        fill(x + dx, y + dy, piece % 3 ? 2 : 3, 2, color);
+    }
+}
+
+static void rescueAirSprite(int x, int y, int kind, int facing, float time)
+{
+    static const char *jet[] = {"....##.................................",
+                                "....###................................",
+                                "....####.............####..............",
+                                "....#####..........######..............",
+                                "....######......#########..............",
+                                "...############################........",
+                                "..###############################......",
+                                "#######################################",
+                                "...##################################..",
+                                "....###############...########.........",
+                                "......###....#######...................",
+                                "..............#######..................",
+                                "................######................."};
+    static const char *drone[] = {".###.......###.",
+                                  "..#.........#..",
+                                  "..####...####..",
+                                  "....#######....",
+                                  ".....#####.....",
+                                  "......###......",
+                                  ".......#......."};
+    int width = kind == RESCUE_JET ? 39 : 15;
+    int height = kind == RESCUE_JET ? 13 : 7;
+    for (int row = 0; row < height; row++)
+        for (int column = 0; column < width; column++)
+            if ((kind == RESCUE_JET ? jet[row][column] : drone[row][column]) == '#')
+                pixel(
+                    x + (column - width / 2) * facing, y + row - height / 2, kind == RESCUE_JET ? 0xbcc9db : 0xcd92ae);
+    if (kind == RESCUE_JET)
+    {
+        line(x + facing * 4, y - 2, x + facing * 11, y - 2, 0x36516e);
+        line(x - facing * 11, y + 2, x + facing * 9, y + 2, 0x738da8);
+        line(x - facing * 19, y, x - facing * (22 + (int)(time * 25) % 3), y, 0xffa34f);
+    }
+    if (kind == RESCUE_DRONE)
+    {
+        int span = (int)(time * 25) % 2 ? 3 : 1;
+        line(x - 5 - span, y - 4, x - 5 + span, y - 4, 0xeac8d6);
+        line(x + 5 - span, y - 4, x + 5 + span, y - 4, 0xeac8d6);
+    }
+}
+
+static void rescueTally(const Rescue *r)
+{
+    char buf[64];
+    clear(0x080b20);
+    snprintf(buf, sizeof(buf), "WAVE %02d COMPLETE", r->stage);
+    text(90, 20, buf, CYAN, 2);
+    const char *labels[] = {"RESCUED", "LOST", "TANKS", "JETS", "DRONES"};
+    const int values[] = {200, 0, 100, 300, 150};
+    for (int row = 0; row < 5; row++)
+    {
+        int y = 64 + row * 25;
+        if (row < 2)
+            rescuePerson(54, y + 7, row == 0 ? 4 : 6, 1);
+        else if (row == 2)
+            rescueTank(54, y, 1, 0);
+        else
+            rescueAirSprite(54, y, row == 3 ? RESCUE_JET : RESCUE_DRONE, 1, r->time);
+        text(90, y - 3, labels[row], row == 1 ? 0xffa0a0 : 0xcbb7e8, 1);
+        snprintf(buf, sizeof(buf), "%02d", r->tallyShown[row]);
+        text(200, y - 6, buf, 0xffffff, 2);
+        snprintf(buf, sizeof(buf), "%05d", r->tallyShown[row] * values[row]);
+        text(275, y - 6, buf, ORANGE, 2);
+    }
+    line(25, 189, 375, 189, 0x384363);
+    snprintf(buf, sizeof(buf), "SCORE %07d", r->tallyScore);
+    text(110, 210, buf, 0xffffff, 2);
+}
+
+void drawRescueTallyPanel(const Rescue *r)
+{
+    char buf[64];
+    clear(0x080b20);
+    text(48, 25, "RESCUE WING", CYAN, 3);
+    heli(160, 95, 1, 0xb5d77a, r->time, 0);
+    snprintf(buf, sizeof(buf), "LIVES REMAINING: %d", r->lives);
+    text(50, 135, buf, 0xffffff, 2);
+    text(50, 173, r->tallyRow < 5 ? "COUNTING SCORE" : "NEXT WAVE...", ORANGE, 2);
+    text(16, 228, "START: EXIT   SELECT: MENU", 0x9989b4, 1);
+}
+
 void drawRescue(Rescue *r)
 {
+    if (r->tally)
+    {
+        rescueTally(r);
+        return;
+    }
     clear(0);
     char buf[64];
     for (int i = 0; i < 32; i++)
@@ -767,7 +966,7 @@ void drawRescue(Rescue *r)
     rescueTrees(r->camera);
     fill(0, RESCUE_HORIZON, 400, 240 - RESCUE_HORIZON, 0x858585);
     /* Sparse low scrub sits on the horizon, in world coordinates. */
-    for (int i = 0; i < 9; i++)
+    for (int i = 0; i < 19; i++)
     {
         int x = 220 + i * 174 - r->camera;
         line(x - 17, 189, x + 23, 189, 0x443ca0);
@@ -778,15 +977,25 @@ void drawRescue(Rescue *r)
             line(tx, 188, tx + 3, 186 - (i + tuft) % 2, 0x9393c0);
         }
     }
+    for (int i = 0; i < RESCUE_AIRCRAFT; i++)
+        if (r->aircraft[i].alive)
+            rescueAirSprite(
+                r->aircraft[i].x - r->camera, r->aircraft[i].y, r->aircraft[i].kind, r->aircraft[i].facing, r->time);
+    for (int i = 0; i < RESCUE_MINES; i++)
+        if (r->mines[i].alive)
+        {
+            int x = r->mines[i].x - r->camera, y = r->mines[i].y;
+            unsigned color = (int)(r->time * 8) % 2 ? 0xffc66b : 0xff547b;
+            circle(x, y, 3, color);
+            line(x - 5, y, x + 5, y, color);
+            line(x, y - 5, x, y + 5, color);
+        }
     rescueHomebase(r);
-    for (int i = 0; i < 4; i++)
-    {
-        int x = 380 + i * 300 - r->camera;
-        box(x, 152, 85, 38, 0x4c4570);
-        text(x + 12, 158, "RESCUE", 0x847ca7, 1);
-    }
+    rescueBoundary(r->camera);
+    for (int i = 0; i < RESCUE_HOUSES; i++)
+        rescueHouse(&r->houses[i], r->camera, r->time, i);
     for (int i = 0; i < PEOPLE; i++)
-        if (r->people[i].state == 0)
+        if (r->people[i].state == PERSON_WAITING || r->people[i].state == PERSON_FLEEING)
         {
             int x = r->people[i].x - r->camera;
             rescuePerson(x, RESCUE_HORIZON, (int)(r->time * 8 + i) % 4, 1);
@@ -799,6 +1008,13 @@ void drawRescue(Rescue *r)
                        : walk->action == HOME_PAUSE ? 6
                                                     : (int)walk->phase % 4;
             rescuePerson(r->people[i].x - r->camera, RESCUE_HORIZON, pose, walk->facing);
+        }
+    for (int i = 0; i < PEOPLE; i++)
+        if (r->ouchLife[i] > 0)
+        {
+            int x = r->people[i].x - r->camera;
+            int y = RESCUE_HORIZON - 15 - (int)((.85f - r->ouchLife[i]) * 12);
+            text(x - 14, y, "OUCH!", 0xffb0a0, 1);
         }
     for (int i = 0; i < TANKS; i++)
         if (r->tanks[i].alive)
@@ -837,10 +1053,15 @@ void drawRescue(Rescue *r)
         line(x, y - radius, x, y + radius / 2, color);
         pixel(x, y, 0xffffff);
     }
-    heli(r->x - r->camera, r->y, r->yaw, r->shield > 0 ? 0xffffff : 0xb5d77a, r->time, r->tilt);
+    if (r->crashTimer > 0)
+        rescueCrash(r);
+    else if (!r->over)
+        heli(r->x - r->camera, r->y, r->yaw, r->shield > 0 ? 0xffffff : 0xb5d77a, r->time, r->tilt);
     fill(0, 222, 400, 18, 0x1b1b24);
-    snprintf(buf, sizeof(buf), "LIVES %d   ABOARD %d/8   RESCUED %d/12", r->lives, r->onboard, r->rescued);
+    snprintf(buf, sizeof(buf), "LIVES %d ABOARD %d/16 SAVED %d LOST %d", r->lives, r->onboard, r->rescued, r->lost);
     text(8, 225, buf, 0xffffff, 1);
     snprintf(buf, sizeof(buf), "RESCUE WING  STAGE %d  SCORE %d", r->stage, r->score);
     text(8, 5, buf, 0xffffff, 1);
+    if (r->invincible)
+        text(8, 18, "CHEAT: INVINCIBLE", 0xffdf83, 1);
 }

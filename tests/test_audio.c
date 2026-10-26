@@ -1,15 +1,15 @@
-#include <3ds.h>
 #include "delta_audio.h"
 #include "sound_synth.h"
+#include <3ds.h>
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 static int live, allocations, failAllocation, adds, flushes, exits, initResult;
 static bool dsp;
-static float rates[19];
-static ndspWaveBuf *queued[19];
+static float rates[23];
+static ndspWaveBuf *queued[23];
 
 Result ndspInit(void)
 {
@@ -20,7 +20,7 @@ Result ndspInit(void)
 void ndspExit(void)
 {
     assert(dsp);
-    for (int i = 0; i < 19; i++)
+    for (int i = 0; i < 23; i++)
         assert(!queued[i]);
     dsp = false;
     exits++;
@@ -64,7 +64,7 @@ void ndspSetMasterVol(float volume)
 
 void ndspChnReset(int ch)
 {
-    assert(ch >= 0 && ch < 19);
+    assert(ch >= 0 && ch < 23);
 }
 
 void ndspChnSetInterp(int ch, int interp)
@@ -75,7 +75,7 @@ void ndspChnSetInterp(int ch, int interp)
 
 void ndspChnSetRate(int ch, float rate)
 {
-    assert(ch >= 0 && ch < 19);
+    assert(ch >= 0 && ch < 23);
     if (ch == 10)
         assert(rate >= DELTA_SOUND_RATE * .64f && rate <= DELTA_SOUND_RATE * 1.06f);
     else
@@ -113,13 +113,14 @@ void ndspChnWaveBufClear(int ch)
 
 static void noQueues(void)
 {
-    for (int i = 0; i < 19; i++)
+    for (int i = 0; i < 23; i++)
         assert(!queued[i]);
 }
 
 int main(void)
 {
-    // Actual PCM synthesis: finite, bounded, click-free endpoints and deterministic.
+    // Actual PCM synthesis: finite, bounded, click-free endpoints and
+    // deterministic.
     for (int effect = 0; effect < SFX_COUNT; effect++)
     {
         size_t n = soundSamples(effect);
@@ -202,6 +203,45 @@ int main(void)
     r.y = RESCUE_LAND_Y;
     rescueAudioUpdate(&r, true, .016f);
     assert(queued[10] && queued[10]->looping && !queued[9]);
+    r.crashTimer = .9f;
+    int beforeCrash = adds;
+    rescueAudioUpdate(&r, true, .016f);
+    assert(!queued[10] && queued[19] && adds == beforeCrash + 1);
+    rescueAudioUpdate(&r, true, .016f);
+    assert(adds == beforeCrash + 1);
+    rescueAudioUpdate(&r, false, .016f);
+    noQueues();
+    r.crashTimer = 0;
+    rescueAudioUpdate(&r, true, .016f);
+    r.tally = true;
+    r.win = true;
+    r.soundEvents = RESCUE_SOUND_TALLY;
+    rescueAudioUpdate(&r, true, .016f);
+    assert(queued[21] && !queued[10]);
+    rescueAudioUpdate(&r, false, .016f);
+    noQueues();
+    r.win = r.tally = false;
+    r.soundEvents = RESCUE_SOUND_WAVE;
+    rescueAudioUpdate(&r, true, .016f);
+    assert(queued[22] && queued[10]);
+    rescueAudioUpdate(&r, false, .016f);
+    noQueues();
+    rescueAudioUpdate(&r, true, .016f);
+    r.soundEvents = RESCUE_SOUND_HOUSE_HIT;
+    rescueAudioUpdate(&r, true, .016f);
+    assert(queued[19] && !r.soundEvents);
+    rescueAudioUpdate(&r, false, .016f);
+    noQueues();
+    rescueAudioUpdate(&r, true, .016f);
+    r.soundEvents = RESCUE_SOUND_OUCH;
+    int beforeOuch = adds;
+    rescueAudioUpdate(&r, true, .016f);
+    assert(!r.soundEvents && queued[20] && adds == beforeOuch + 1);
+    rescueAudioUpdate(&r, true, .016f);
+    assert(adds == beforeOuch + 1);
+    rescueAudioUpdate(&r, false, .016f);
+    noQueues();
+    rescueAudioUpdate(&r, true, .016f);
     float idle = rates[10];
     int loopAdds = adds;
     r.y = 100;
@@ -258,7 +298,9 @@ int main(void)
     int previousExits = exits;
     deltaAudioExit();
     assert(exits == previousExits);
-    puts(
-        "PASS: eleven synthesized sounds and Sky Shield event audio and dynamic rotor acceleration/deceleration, deterministic PCM/levels/fades, DSP failure, allocation cleanup, cache sizes, polyphony/reuse, thrust loop, background loop, inactive silence, event consumption, safe shutdown.");
+    puts("PASS: twelve synthesized sounds and Sky Shield event audio and dynamic "
+         "rotor acceleration/deceleration, deterministic PCM/levels/fades, DSP "
+         "failure, allocation cleanup, cache sizes, polyphony/reuse, thrust loop, "
+         "background loop, inactive silence, event consumption, safe shutdown.");
     return 0;
 }

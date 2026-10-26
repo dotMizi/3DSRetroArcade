@@ -17,6 +17,7 @@ typedef enum
     SFX_SHIELD_DAMAGE,
     SFX_SHIELD_BONUS,
     SFX_SHIELD_WAVE,
+    SFX_RESCUE_OUCH,
     SFX_COUNT
 } SoundEffect;
 

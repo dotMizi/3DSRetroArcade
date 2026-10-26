@@ -28,7 +28,7 @@ int arcadeHit(int x, int y)
 ShieldWaveConfig shieldWaveConfig(int wave)
 {
     /* Rev. 3 ROM tables $6090/$60a3/$60b2/$60c1, decoded in:
-       https://www.6502disassembly.com/va-missile-command/wave-guide.html */
+     https://www.6502disassembly.com/va-missile-command/wave-guide.html */
     static const unsigned char missiles[19] = {
         12, 15, 18, 12, 16, 14, 17, 10, 13, 16, 19, 12, 14, 16, 18, 14, 17, 19, 22};
     static const unsigned char smart[19] = {0, 0, 0, 0, 0, 1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7, 7};
@@ -36,7 +36,7 @@ ShieldWaveConfig shieldWaveConfig(int wave)
     int index = wave < 1 ? 0 : wave > 19 ? 18 : wave - 1;
     int speedIndex = index < 15 ? index : 14;
     /* Original 8.8 frame-delay curve, mapped to continuous 60 Hz movement.
-       Launch spacing is adapted for this touchscreen arena, capped at wave 19. */
+     Launch spacing is adapted for this touchscreen arena, capped at wave 19. */
     return (ShieldWaveConfig){
         missiles[index], smart[index], 60.f / (1.f + delay[speedIndex] / 256.f), fmaxf(.38f, 1.1f - index * .04f)};
 }
@@ -192,7 +192,7 @@ static void smartBombDodge(Shield *s, Missile *m, float dt)
     if (s->wave >= 9)
         dodgeY = fmaxf(0, dodgeY);
     /* Allow the final approach all the way to the target. Clamping to 214
-       reset a bomb on every frame before it could reach ground level 215. */
+     reset a bomb on every frame before it could reach ground level 215. */
     m->y = clamp(m->y + dodgeY * 42 * dt, SHIELD_ENTRY_Y, m->ty);
 }
 
@@ -383,6 +383,17 @@ static void passengersGoHome(Rescue *r, float dt)
     }
 }
 
+RescueThreatConfig rescueThreatConfig(int stage)
+{
+    int level = stage < 1 ? 1 : stage > 30 ? 30 : stage;
+    return (RescueThreatConfig){level < 2    ? 0
+                                : level == 2 ? 1
+                                             : (int)fminf(4, 2 + (level - 3) / 3),
+                                level < 3 ? 0 : (int)fminf(6, 2 + (level - 3) / 2),
+                                (int)fminf(4, 2 + (level - 1) / 4),
+                                level >= 4};
+}
+
 void rescueStart(Rescue *r, int best, int stage, int score)
 {
     memset(r, 0, sizeof(*r));
@@ -395,9 +406,21 @@ void rescueStart(Rescue *r, int best, int stage, int score)
     r->best = best;
     r->stage = stage;
     r->score = score;
+    r->stageStartScore = score;
+    r->soundEvents = RESCUE_SOUND_WAVE;
+    for (int i = 0; i < RESCUE_HOUSES; i++)
+        r->houses[i].x = RESCUE_FIRST_GROUP_X + i * RESCUE_GROUP_SPACING + 100;
     for (int i = 0; i < PEOPLE; i++)
     {
-        r->people[i] = (Person){400 + (i / 3) * 300 + (i % 3) * 18, 0};
+        r->people[i] =
+            (Person){RESCUE_FIRST_GROUP_X + (i / RESCUE_PEOPLE_PER_HOUSE) * RESCUE_GROUP_SPACING + (i % 8) * 9, 0};
+        int group = i / RESCUE_PEOPLE_PER_HOUSE, local = i % RESCUE_PEOPLE_PER_HOUSE;
+        if (local >= RESCUE_PEOPLE_PER_HOUSE / 2)
+        {
+            r->people[i].state = PERSON_SHELTERED;
+            r->people[i].x = r->houses[group].x;
+            r->houses[group].residents++;
+        }
         r->peopleHome[i] = r->people[i].x;
         HomeWalk *walk = &r->homeWalk[i];
         walk->rng = 0x9e3779b9u ^ ((unsigned)(i + 1) * 0x85ebca6bu) ^ (unsigned)best ^ ((unsigned)stage << 16);
@@ -406,28 +429,95 @@ void rescueStart(Rescue *r, int best, int stage, int score)
         walk->speed = 12 + passengerRandom(walk) * 15;
         walk->facing = 1;
     }
+    r->patrolRng = 0x72616365u ^ (unsigned)best ^ ((unsigned)stage * 0x9e3779b9u);
+    if (!r->patrolRng)
+        r->patrolRng = 1;
+    r->tankSpawnDelay = 9;
+    r->aircraftSpawnDelay = 10;
+}
+
+static float patrolRandom(Rescue *r)
+{
+    r->patrolRng ^= r->patrolRng << 13;
+    r->patrolRng ^= r->patrolRng >> 17;
+    r->patrolRng ^= r->patrolRng << 5;
+    return (r->patrolRng & 0xffffff) / 16777216.f;
+}
+
+static void rescuePatrols(Rescue *r, float dt)
+{
+    int active = 0;
     for (int i = 0; i < TANKS; i++)
     {
-        r->tanks[i] = (Tank){280 + i * 240, 1.5f + i * .3f, true};
-        r->tankVelocity[i] = (i % 2 ? -1 : 1) * (14 + i * 2);
+        if (r->tanks[i].alive && r->tankLife[i] > 0)
+        {
+            r->tankLife[i] -= dt;
+            if (r->tankLife[i] <= 0)
+                r->tanks[i].alive = false;
+        }
+        active += r->tanks[i].alive;
+    }
+    if (r->x < RESCUE_FENCE_X)
+        return;
+    r->tankSpawnDelay -= dt;
+    if (r->tankSpawnDelay > 0 || active >= rescueThreatConfig(r->stage).tanks)
+        return;
+    for (int i = 0; i < TANKS; i++)
+        if (!r->tanks[i].alive)
+        {
+            bool fromRight = r->camera - 35 < RESCUE_TANK_MIN_X ||
+                             (r->camera + 435 < RESCUE_WORLD_WIDTH - 30 && patrolRandom(r) < .6f);
+            float x = fromRight ? r->camera + 435 : r->camera - 35;
+            x = clamp(x, RESCUE_TANK_MIN_X, RESCUE_WORLD_WIDTH - 30);
+            r->tanks[i] = (Tank){x, 2.5f, true};
+            r->tankVelocity[i] = (fromRight ? -1 : 1) * (14 + patrolRandom(r) * 10);
+            r->tankLife[i] = 32 + patrolRandom(r) * 18;
+            r->tankSpawnDelay = fmaxf(6, 13 - (r->stage - 1) * .5f) + patrolRandom(r) * 11;
+            break;
+        }
+}
+
+static void rescueHouseEvacuation(Rescue *r, float dt)
+{
+    for (int house = 0; house < RESCUE_HOUSES; house++)
+    {
+        RescueHouse *home = &r->houses[house];
+        if ((!home->burning && !home->evacuating) || home->residents <= 0)
+            continue;
+        home->escapeDelay -= dt;
+        if (!home->burning && home->escapeDelay > 0)
+            continue;
+        for (int i = house * RESCUE_PEOPLE_PER_HOUSE; i < (house + 1) * RESCUE_PEOPLE_PER_HOUSE; i++)
+            if (r->people[i].state == PERSON_SHELTERED)
+            {
+                float side = i % 2 ? -1 : 1;
+                r->people[i].state = PERSON_FLEEING;
+                r->people[i].x = home->x + side * 5;
+                r->peopleHome[i] = home->x + side * (40 + i % 3 * 13);
+                home->residents--;
+                home->escapeDelay = 1.8f + patrolRandom(r) * 1.7f;
+                if (!home->burning)
+                    break;
+            }
     }
 }
 
 static void rescueHit(Rescue *r)
 {
-    if (r->shield > 0)
+    if (r->invincible || r->shield > 0 || r->crashTimer > 0)
         return;
     r->lives--;
     for (int i = 0; i < PEOPLE; i++)
-        if (r->people[i].state == 1)
-            r->people[i].state = 0;
+        if (r->people[i].state == PERSON_ABOARD)
+        {
+            r->people[i].state = PERSON_LOST;
+            r->lost++;
+        }
     r->onboard = 0;
-    r->x = 80;
-    r->y = 130;
     r->vx = r->vy = 0;
     r->shield = 3;
-    if (!r->lives)
-        r->over = true;
+    r->crashTimer = .9f;
+    /* Keep the camera and impact position until the explosion has finished. */
 }
 
 static void bullet(Rescue *r, float x, float y, float vx, float vy, bool hostile, bool forward)
@@ -450,14 +540,174 @@ static void bombImpact(Rescue *r, float x, float y)
         }
 }
 
+static void rescueAirCombat(Rescue *r, float dt)
+{
+    RescueThreatConfig config = rescueThreatConfig(r->stage);
+    int jets = 0, drones = 0;
+    for (int i = 0; i < RESCUE_AIRCRAFT; i++)
+        if (r->aircraft[i].alive)
+        {
+            jets += r->aircraft[i].kind == RESCUE_JET;
+            drones += r->aircraft[i].kind == RESCUE_DRONE;
+        }
+    if (r->x >= RESCUE_FENCE_X)
+    {
+        r->aircraftSpawnDelay -= dt;
+        if (r->aircraftSpawnDelay <= 0 && (jets < config.jets || drones < config.drones))
+            for (int i = 0; i < RESCUE_AIRCRAFT; i++)
+                if (!r->aircraft[i].alive)
+                {
+                    int kind = jets < config.jets ? RESCUE_JET : RESCUE_DRONE;
+                    float x = r->facing > 0 ? r->camera - 30 : r->camera + 430;
+                    x = clamp(x, RESCUE_FENCE_X + 25, RESCUE_WORLD_WIDTH - 25);
+                    r->aircraft[i] = (RescueAircraft){
+                        x, 65 + patrolRandom(r) * 60, 3.5f, 5, kind, kind == RESCUE_JET ? 3 : 2, r->facing, true};
+                    r->aircraftSpawnDelay = kind == RESCUE_JET ? 10 : 9;
+                    break;
+                }
+    }
+    for (int i = 0; i < RESCUE_AIRCRAFT; i++)
+    {
+        RescueAircraft *air = &r->aircraft[i];
+        if (!air->alive)
+            continue;
+        bool jet = air->kind == RESCUE_JET;
+        float targetY = clamp(r->y + sinf(r->time * .8f + i) * 12 - (jet ? 0 : 32), 40, 148);
+        if (jet)
+        {
+            /* Fly through the scene at constant speed; turn only beyond the screen. */
+            air->x += air->facing * (190 + fminf(r->stage, 15) * 3) * dt;
+            if ((air->facing > 0 && air->x > r->camera + 1400) || (air->facing < 0 && air->x < r->camera - 1000))
+            {
+                air->facing = -air->facing;
+                air->x = air->facing > 0 ? r->camera - 1000 : r->camera + 1400;
+            }
+        }
+        else
+        {
+            float targetX = clamp(r->x - r->facing * (90 + i * 15), RESCUE_FENCE_X + 25, RESCUE_WORLD_WIDTH - 25);
+            air->x += clamp(targetX - air->x, -55 * dt, 55 * dt);
+            air->facing = r->x < air->x ? -1 : 1;
+        }
+        float climb = jet ? 8 : 16;
+        float heightChange = (targetY - air->y) * (jet ? .35f : 1.f) * dt;
+        air->y += clamp(heightChange, -climb * dt, climb * dt);
+        air->fire -= dt;
+        if (air->fire <= 0 && r->x >= RESCUE_FENCE_X && fabsf(r->x - air->x) < 360)
+        {
+            float angle = atan2f(r->y - air->y, r->x - air->x);
+            angle += (patrolRandom(r) * 2 - 1) * fmaxf(.045f, .15f - r->stage * .008f);
+            float speed = jet ? 115 : 75;
+            bullet(r, air->x + air->facing * 12, air->y, cosf(angle) * speed, sinf(angle) * speed, true, false);
+            air->fire = fmaxf(jet ? 2.8f : 3.5f, (jet ? 6.5f : 10.f) - r->stage * .25f) + patrolRandom(r);
+        }
+        air->mineDelay -= dt;
+        if (!jet && config.mines && air->mineDelay <= 0 && r->x >= RESCUE_FENCE_X)
+            for (int mine = 0; mine < RESCUE_MINES; mine++)
+                if (!r->mines[mine].alive)
+                {
+                    r->mines[mine] = (RescueMine){air->x, air->y + 8, 16, true};
+                    air->mineDelay = fmaxf(4, 9 - r->stage * .2f) + patrolRandom(r) * 3;
+                    break;
+                }
+    }
+    for (int i = 0; i < RESCUE_MINES; i++)
+    {
+        RescueMine *mine = &r->mines[i];
+        if (!mine->alive)
+            continue;
+        mine->life -= dt;
+        mine->y = fminf(RESCUE_LAND_Y - 8, mine->y + 25 * dt);
+        if (mine->life <= 0)
+            mine->alive = false;
+        else if (hypotf(mine->x - r->x, mine->y - r->y) < 15)
+        {
+            mine->alive = false;
+            bombImpact(r, mine->x, mine->y);
+            rescueHit(r);
+        }
+    }
+}
+
+static void rescueCountWave(Rescue *r, float dt)
+{
+    r->time += dt;
+    r->tallyDelay += dt;
+    if (r->tallyRow >= 5)
+    {
+        if (r->tallyDelay >= 1.3f)
+        {
+            int score = r->score, best = r->best, lives = r->lives, next = r->stage + 1;
+            bool invincible = r->invincible;
+            rescueStart(r, best, next, score);
+            r->invincible = invincible;
+            r->lives = lives;
+        }
+        return;
+    }
+    int target[] = {r->rescued, r->lost, r->tanksDestroyed, r->jetsDestroyed, r->dronesDestroyed};
+    const int value[] = {200, 0, 100, 300, 150};
+    float interval = r->tallyRow == 2 ? .11f : .045f;
+    if (r->tallyDelay < interval)
+        return;
+    int row = r->tallyRow;
+    if (r->tallyShown[row] < target[row])
+    {
+        r->tallyShown[row]++;
+        r->tallyScore += value[row];
+        r->tallyDelay -= interval;
+        r->soundEvents |= RESCUE_SOUND_TALLY;
+    }
+    else
+    {
+        r->tallyRow++;
+        r->tallyDelay = r->tallyRow == 5 ? 0 : -.2f;
+    }
+}
+
 void rescueStep(Rescue *r, float dx, float dy, bool fire, bool dropBomb, float dt)
 {
-    if (r->over || r->win)
+    if (r->over)
         return;
     dt = clamp(dt, 0, .034f);
+    if (r->tally)
+    {
+        rescueCountWave(r, dt);
+        return;
+    }
+    if (r->win)
+        return;
     r->time += dt;
+    for (int i = 0; i < PEOPLE; i++)
+        r->ouchLife[i] = fmaxf(0, r->ouchLife[i] - dt);
     for (int i = 0; i < 8; i++)
         r->bombImpacts[i].life = fmaxf(0, r->bombImpacts[i].life - dt);
+    bool landedNearHouse = r->y >= RESCUE_LAND_Y - 3 && fabsf(r->vx) < 35 && fabsf(r->vy) < 25 && r->crashTimer <= 0;
+    if (landedNearHouse)
+        for (int i = 0; i < RESCUE_HOUSES; i++)
+            if (fabsf(r->x - r->houses[i].x) < 110)
+                r->houses[i].evacuating = true;
+    rescueHouseEvacuation(r, dt);
+    if (r->crashTimer > 0)
+    {
+        r->crashTimer = fmaxf(0, r->crashTimer - dt);
+        passengersGoHome(r, dt);
+        if (r->crashTimer <= 0)
+        {
+            if (r->lives <= 0)
+                r->over = true;
+            else
+            {
+                r->x = 80;
+                r->y = 130;
+                r->camera = 0;
+                r->facing = 1;
+                r->yaw = 1;
+                r->tilt = r->frontHold = r->boarding = 0;
+            }
+        }
+        return;
+    }
     r->shield = fmaxf(0, r->shield - dt);
     r->cooldown -= dt;
     r->gunCooldown -= dt;
@@ -494,17 +744,31 @@ void rescueStep(Rescue *r, float dx, float dy, bool fire, bool dropBomb, float d
         r->yaw = (float)r->facing;
     r->vx = clamp((r->vx + dx * 230 * dt) * powf(.3f, dt), -145, 145);
     r->vy = clamp((r->vy + dy * 230 * dt) * powf(.12f, dt), -100, 100);
-    r->x = clamp(r->x + r->vx * dt, 20, 1580);
+    float previousY = r->y;
+    float landingSpeed = r->vy;
+    r->x = clamp(r->x + r->vx * dt, 20, RESCUE_WORLD_WIDTH - 20);
     r->y = clamp(r->y + r->vy * dt, 35, RESCUE_LAND_Y);
+    if (previousY < RESCUE_LAND_Y && r->y >= RESCUE_LAND_Y && landingSpeed > 0)
+        for (int i = 0; i < PEOPLE; i++)
+            if ((r->people[i].state == PERSON_WAITING || r->people[i].state == PERSON_FLEEING) &&
+                fabsf(r->people[i].x - r->x) < 19)
+            {
+                r->people[i].state = PERSON_LOST;
+                r->lost++;
+                r->ouchLife[i] = .85f;
+                r->soundEvents |= RESCUE_SOUND_OUCH;
+            }
     if (r->y >= RESCUE_LAND_Y)
     {
         if (r->vy > 65)
             rescueHit(r);
+        if (r->crashTimer > 0)
+            return;
         r->vy = 0;
     }
-    if (r->x <= 20 || r->x >= 1580)
+    if (r->x <= 20 || r->x >= RESCUE_WORLD_WIDTH - 20)
         r->vx = 0;
-    r->camera = clamp(r->x - 200, 0, 1200);
+    r->camera = clamp(r->x - 200, 0, RESCUE_WORLD_WIDTH - 400);
     if (fire && r->gunCooldown <= 0)
     {
         float aimX = r->facing * cosf(r->tilt), aimY = r->facing * sinf(r->tilt);
@@ -521,12 +785,16 @@ void rescueStep(Rescue *r, float dx, float dy, bool fire, bool dropBomb, float d
     for (int i = 0; i < PEOPLE; i++)
     {
         Person *person = &r->people[i];
-        if (person->state != 0)
+        if (person->state != PERSON_WAITING && person->state != PERSON_FLEEING)
             continue;
-        float target = r->peopleHome[i] + sinf(r->time * .8f + i * 1.7f) * 14;
+        bool fleeing = person->state == PERSON_FLEEING;
+        float target = fleeing ? r->peopleHome[i] : r->peopleHome[i] + sinf(r->time * .8f + i * 1.7f) * 14;
         if (landed && r->x >= 165 && fabsf(person->x - r->x) < 70)
             target = r->x;
-        person->x += clamp(target - person->x, -10 * dt, 10 * dt);
+        float speed = fleeing ? 22 + i % 3 * 3 : 10;
+        person->x += clamp(target - person->x, -speed * dt, speed * dt);
+        if (fleeing && fabsf(person->x - r->peopleHome[i]) < 1)
+            person->state = PERSON_WAITING;
     }
     passengersGoHome(r, dt);
     if (landed && r->x < 165)
@@ -559,7 +827,8 @@ void rescueStep(Rescue *r, float dx, float dy, bool fire, bool dropBomb, float d
             r->boarding = 0;
             if (r->onboard < RESCUE_CAPACITY)
                 for (int i = 0; i < PEOPLE; i++)
-                    if (r->people[i].state == PERSON_WAITING && fabsf(r->people[i].x - r->x) < 45)
+                    if ((r->people[i].state == PERSON_WAITING || r->people[i].state == PERSON_FLEEING) &&
+                        fabsf(r->people[i].x - r->x) < 45)
                     {
                         r->people[i].state = PERSON_ABOARD;
                         r->onboard++;
@@ -569,30 +838,58 @@ void rescueStep(Rescue *r, float dx, float dy, bool fire, bool dropBomb, float d
     }
     else
         r->boarding = 0;
+    rescuePatrols(r, dt);
     for (int i = 0; i < TANKS; i++)
     {
         Tank *t = &r->tanks[i];
         if (!t->alive)
             continue;
         t->x += r->tankVelocity[i] * dt;
-        if (t->x < 230 || t->x > 1555)
+        if (t->x < RESCUE_TANK_MIN_X || t->x > RESCUE_WORLD_WIDTH - 45)
         {
-            t->x = clamp(t->x, 230, 1555);
+            t->x = clamp(t->x, RESCUE_TANK_MIN_X, RESCUE_WORLD_WIDTH - 45);
             r->tankVelocity[i] = -r->tankVelocity[i];
         }
         t->fire -= dt;
         if (t->fire <= 0)
         {
-            if (fabsf(t->x - r->x) < 340)
+            int houseTarget = -1;
+            bool visibleTank = t->x >= r->camera - 15 && t->x <= r->camera + 415;
+            if (visibleTank)
+                for (int house = 0; house < RESCUE_HOUSES; house++)
+                {
+                    const RescueHouse *home = &r->houses[house];
+                    if (!home->burning && home->x >= r->camera + 24 && home->x <= r->camera + 376 &&
+                        fabsf(home->x - t->x) < 280 && patrolRandom(r) < .55f)
+                    {
+                        houseTarget = house;
+                        break;
+                    }
+                }
+            if (houseTarget >= 0 || fabsf(t->x - r->x) < 340)
             {
-                float a = atan2f(r->y - RESCUE_TANK_Y, r->x - t->x), speed = 75 + fminf(r->stage * 8, 65);
+                float tx = houseTarget >= 0 ? r->houses[houseTarget].x : r->x;
+                float ty = houseTarget >= 0 ? RESCUE_HORIZON - 10 : r->y;
+                float a = atan2f(ty - RESCUE_TANK_Y, tx - t->x);
+                float speed = 65 + fminf(fmaxf(0, r->stage - 1) * 7, 70);
+                if (houseTarget < 0)
+                {
+                    /* Early crews have wide aim scatter and slow reloads.
+                       House fire remains reliable so residents can escape. */
+                    float spread = fmaxf(.045f, .28f - fmaxf(0, r->stage - 1) * .026f);
+                    a += (patrolRandom(r) * 2 - 1) * spread;
+                }
                 bullet(r, t->x, RESCUE_TANK_Y, cosf(a) * speed, sinf(a) * speed, true, false);
             }
-            t->fire = fmaxf(1, 3.5f - r->stage * .2f) + i * .13f;
+            if (houseTarget >= 0)
+                t->fire = 3.5f;
+            else
+                t->fire = fmaxf(1.8f, 4.8f - fmaxf(0, r->stage - 1) * .3f) + patrolRandom(r) * 1.2f;
         }
         if (fabsf(t->x - r->x) < 22 && r->y > RESCUE_LAND_Y - 14)
             rescueHit(r);
     }
+    rescueAirCombat(r, dt);
     for (int i = 0; i < BULLETS; i++)
     {
         Bullet *b = &r->bullets[i];
@@ -605,15 +902,32 @@ void rescueStep(Rescue *r, float dx, float dy, bool fire, bool dropBomb, float d
             b->vy += 150 * dt;
         b->x += b->vx * dt;
         b->y += b->vy * dt;
-        if (b->y > 219 || b->y < 10 || b->x < 0 || b->x > 1600)
+        if (b->y > 219 || b->y < 10 || b->x < 0 || b->x > RESCUE_WORLD_WIDTH)
         {
-            if (!b->hostile && !b->forward && b->y > 219 && b->x >= 0 && b->x <= 1600)
+            if (!b->hostile && !b->forward && b->y > 219 && b->x >= 0 && b->x <= RESCUE_WORLD_WIDTH)
                 bombImpact(r, b->x, 218);
             b->life = 0;
             continue;
         }
         if (b->hostile)
         {
+            for (int house = 0; house < RESCUE_HOUSES; house++)
+            {
+                RescueHouse *home = &r->houses[house];
+                if (fabsf(b->x - home->x) <= 24 && b->y >= RESCUE_HORIZON - 30 && b->y <= RESCUE_HORIZON)
+                {
+                    b->life = 0;
+                    if (!home->burning)
+                    {
+                        home->burning = true;
+                        home->escapeDelay = .15f;
+                        r->soundEvents |= RESCUE_SOUND_HOUSE_HIT;
+                    }
+                    break;
+                }
+            }
+            if (b->life <= 0)
+                continue;
             if (hypotf(b->x - r->x, b->y - r->y) < 15)
             {
                 b->life = 0;
@@ -621,23 +935,70 @@ void rescueStep(Rescue *r, float dx, float dy, bool fire, bool dropBomb, float d
             }
         }
         else
-            for (int j = 0; j < TANKS; j++)
+        {
+            for (int j = 0; j < RESCUE_AIRCRAFT && b->life > 0; j++)
+            {
+                RescueAircraft *air = &r->aircraft[j];
+                float hitX = (b->x - air->x) / (air->kind == RESCUE_JET ? 20.f : 11.f);
+                float hitY = (b->y - air->y) / (air->kind == RESCUE_JET ? 7.f : 11.f);
+                if (air->alive && hitX * hitX + hitY * hitY < 1)
+                {
+                    b->life = 0;
+                    air->hp--;
+                    if (air->hp <= 0)
+                    {
+                        air->alive = false;
+                        bombImpact(r, air->x, air->y);
+                        if (air->kind == RESCUE_JET)
+                        {
+                            r->jetsDestroyed++;
+                            r->score += 300;
+                        }
+                        else
+                        {
+                            r->dronesDestroyed++;
+                            r->score += 150;
+                        }
+                        r->soundEvents |= RESCUE_SOUND_HOUSE_HIT;
+                        r->aircraftSpawnDelay = fmaxf(r->aircraftSpawnDelay, fmaxf(6, 14 - r->stage * .6f));
+                    }
+                }
+            }
+            for (int mine = 0; mine < RESCUE_MINES && b->life > 0; mine++)
+                if (r->mines[mine].alive && hypotf(b->x - r->mines[mine].x, b->y - r->mines[mine].y) < 8)
+                {
+                    b->life = 0;
+                    r->mines[mine].alive = false;
+                    bombImpact(r, r->mines[mine].x, r->mines[mine].y);
+                }
+            for (int j = 0; j < TANKS && b->life > 0; j++)
                 if (r->tanks[j].alive && fabsf(b->x - r->tanks[j].x) < 15 && b->y >= RESCUE_TANK_Y - 9)
                 {
                     r->tanks[j].alive = false;
                     bombImpact(r, r->tanks[j].x, RESCUE_TANK_Y);
                     b->life = 0;
                     r->score += 100;
+                    r->tanksDestroyed++;
                     break;
                 }
+        }
     }
     if (r->score > r->best)
         r->best = r->score;
-    if (r->rescued == PEOPLE)
+    if (r->rescued + r->lost == PEOPLE && r->crashTimer <= 0)
     {
         bool allInside = true;
         for (int i = 0; i < PEOPLE; i++)
-            allInside &= r->people[i].state == PERSON_INSIDE;
+            allInside &=
+                (r->people[i].state == PERSON_INSIDE || r->people[i].state == PERSON_LOST) && r->ouchLife[i] <= 0;
         r->win = allInside;
+        if (allInside)
+        {
+            r->tally = true;
+            r->tallyRow = 0;
+            r->tallyDelay = -.4f;
+            r->tallyScore = r->stageStartScore;
+            memset(r->tallyShown, 0, sizeof(r->tallyShown));
+        }
     }
 }

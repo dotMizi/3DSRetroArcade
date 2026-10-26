@@ -5,7 +5,7 @@
 
 size_t soundSamples(SoundEffect effect)
 {
-    static const float duration[SFX_COUNT] = {.19f, .12f, .42f, 1.f, .8f, 1.f, .18f, .50f, .65f, .045f, .35f};
+    static const float duration[SFX_COUNT] = {.19f, .12f, .42f, 1.f, .8f, 1.f, .18f, .50f, .65f, .045f, .35f, .24f};
     return effect >= 0 && effect < SFX_COUNT ? (size_t)(duration[effect] * DELTA_SOUND_RATE) : 0;
 }
 
@@ -99,6 +99,15 @@ void soundGenerate(SoundEffect effect, int16_t *pcm, size_t count)
             phase += TAU * notes[note] / DELTA_SOUND_RATE;
             float local = fmodf(t, .35f / 3);
             v = sinf(phase) * expf(-12 * local) * 4000;
+            break;
+        }
+        case SFX_RESCUE_OUCH:
+        {
+            /* A short cartoon vowel falling into a breathy "ch" tail. */
+            phase += TAU * (190 - 90 * u) / DELTA_SOUND_RATE;
+            float vowel = (sinf(phase) + .45f * sinf(phase * 3) + .25f * sinf(phase * 5)) * expf(-14 * t);
+            float breath = t > .13f ? (noise - filter) * sinf((t - .13f) / .11f * 3.14159265f) * .35f : 0;
+            v = (vowel + breath) * 6000;
             break;
         }
         default:
